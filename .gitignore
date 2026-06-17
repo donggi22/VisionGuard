@@ -1,0 +1,5 @@
+.env
+/captures
+/recordings
+.venv
+__pycache__
