@@ -48,7 +48,20 @@ crw-rw---- 1 root video /dev/video0
            ↑        ↑
          root만     video 그룹만 읽기/쓰기 가능
 ```
-`sudo usermod -aG video $USER` 로 현재 유저를 `video` 그룹에 추가해줬고, 재로그인으로 그룹 변경이 세션에 적용된 겁니다.
+`sudo usermod -aG video $USER` 로 현재 유저를 `video` 그룹에 추가해줬고, 재로그인(터미널 껐다 켜거나 SSH 재접속)으로 그룹 변경이 세션에 적용된 겁니다.
+
+카메라 테스트:
+```
+python3 -c "
+import cv2
+cap = cv2.VideoCapture(0)
+print('열림:', cap.isOpened())
+ret, frame = cap.read()
+print('프레임:', ret, frame.shape if ret else 'FAIL')
+cap.release()
+"
+```
+
 
 <br>
 
