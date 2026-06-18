@@ -32,6 +32,18 @@ cp .env.example .env
 
 # 환경변수 로드 후 실행
 export $(cat .env | grep -v ^# | xargs)
+
+# 매번 환경변수 치기 귀찮으면 run.sh 만들어두면 됩니다:
+cat > /home/dev/cctv/run.sh << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+source .venv/bin/activate
+export $(cat .env | grep -v ^# | xargs)
+python main.py
+EOF
+chmod +x /home/dev/cctv/run.sh
+
+# 가상환경 활성화 및 서비스 실행
 cd /home/dev/cctv
 source .venv/bin/activate
 python main.py
