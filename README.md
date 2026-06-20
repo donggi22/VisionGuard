@@ -1,6 +1,6 @@
 아키텍처:
 ```
-/home/dev/cctv/
+VisionGuard/
 ├── main.py              # 메인 루프 (모든 컴포넌트 통합)
 ├── config.py            # 환경변수 기반 설정
 ├── motion_detector.py   # MOG2 배경 차분 모션 감지
@@ -11,12 +11,67 @@
 ├── web_app.py           # FastAPI MJPEG 스트리밍 + 이벤트 대시보드
 ├── requirements.txt
 ├── .env.example
+├── run.bat              # Windows 실행 스크립트
+├── run.ps1              # Windows PowerShell 실행 스크립트
+├── run.sh               # Linux 실행 스크립트
 ├── recordings/
 └── captures/
 ```
 
-실행 방법:
+---
+
+## Windows 실행 방법
+
+### 1. Python 설치
+
+```powershell
+winget install Python.Python.3.12
 ```
+
+설치 후 터미널 새로 열고 확인:
+```powershell
+python --version
+```
+
+### 2. .env 설정
+
+```powershell
+copy .env.example .env
+```
+
+`.env` 파일을 열어 `DISCORD_WEBHOOK_URL` 입력.
+
+### 3. 실행
+
+**방법 A — 배치 파일 더블클릭 (가장 간단)**
+
+`run.bat` 더블클릭. 가상환경 생성 + 패키지 설치 + 실행을 자동으로 합니다.
+
+**방법 B — PowerShell**
+
+```powershell
+.\run.ps1
+```
+
+> PowerShell 실행 정책 오류 시:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+
+**방법 C — 수동**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+---
+
+## Linux 실행 방법
+
+```bash
 cd /home/dev/cctv
 
 # 가상환경 생성
@@ -30,26 +85,17 @@ pip install -r requirements.txt
 cp .env.example .env
 # .env 에서 DISCORD_WEBHOOK_URL 입력
 
-# 환경변수 로드 후 실행
-export $(cat .env | grep -v ^# | xargs)
-
-# 매번 환경변수 치기 귀찮으면 run.sh 만들어두면 됩니다:
-cat > /home/dev/cctv/run.sh << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-source .venv/bin/activate
-export $(cat .env | grep -v ^# | xargs)
-python main.py
-EOF
-chmod +x /home/dev/cctv/run.sh
-
-# 가상환경 활성화 및 서비스 실행
-cd /home/dev/cctv
-source .venv/bin/activate
+# 실행
 python main.py
 ```
 
-cam 안 열릴 때:
+`run.sh` 사용 시:
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+cam 안 열릴 때 (Linux):
 
 video 그룹 권한 때문입니다.
 
@@ -62,22 +108,22 @@ crw-rw---- 1 root video /dev/video0
 ```
 `sudo usermod -aG video $USER` 로 현재 유저를 `video` 그룹에 추가해줬고, 재로그인(터미널 껐다 켜거나 SSH 재접속)으로 그룹 변경이 세션에 적용된 겁니다.
 
+---
+
 카메라 테스트:
-```
-python3 -c "
+```python
 import cv2
 cap = cv2.VideoCapture(0)
 print('열림:', cap.isOpened())
 ret, frame = cap.read()
 print('프레임:', ret, frame.shape if ret else 'FAIL')
 cap.release()
-"
 ```
-
 
 <br>
 
 웹 대시보드는 http://localhost:8080 에서 바로 열립니다.
+
 아키텍처 흐름:
 
 ```
@@ -90,4 +136,5 @@ cap.release()
           → Discord 알림 (비동기)
           → 웹 대시보드 이벤트 추가
 ```
+
 Discord Webhook URL은 Discord 채널 설정 → 연동 → 웹후크 에서 생성할 수 있습니다.

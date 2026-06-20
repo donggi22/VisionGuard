@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).parent
 RECORDINGS_DIR = BASE_DIR / "recordings"
@@ -33,6 +36,11 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 # Web
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
+
+# Auth
+LOGIN_USERNAME = os.getenv("LOGIN_USERNAME", "admin")
+LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "changeme")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "please-set-a-secret-in-env")
 
 # YOLO 클래스 중 알림 대상 (비어있으면 전체)
 # COCO 클래스: person=0, car=2, cat=15, dog=16 등

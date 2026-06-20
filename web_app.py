@@ -1,18 +1,41 @@
 import asyncio
 import io
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
-from config import CAPTURES_DIR, RECORDINGS_DIR
+from config import CAPTURES_DIR, RECORDINGS_DIR, LOGIN_USERNAME, LOGIN_PASSWORD, SESSION_SECRET
+
+CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="CCTV Dashboard")
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    _public = {"/login"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in self._public:
+            return await call_next(request)
+        if not request.session.get("authenticated"):
+            return RedirectResponse("/login", status_code=302)
+        return await call_next(request)
+
+
+# SessionMiddleware는 마지막에 추가해야 가장 먼저 실행됨
+app.add_middleware(AuthMiddleware)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="strict", https_only=False)
+
 app.mount("/captures", StaticFiles(directory=str(CAPTURES_DIR)), name="captures")
 app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recordings")
 
@@ -52,6 +75,68 @@ def _jpeg_generator():
         )
 
 
+@app.get("/login", response_class=HTMLResponse)
+def login_page(error: str = ""):
+    error_html = '<p class="error">아이디 또는 비밀번호가 틀렸습니다.</p>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisionGuard 로그인</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #111; color: #eee; font-family: 'Segoe UI', sans-serif;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }}
+  .card {{ background: #1a1a2e; border-radius: 12px; padding: 40px 36px; width: 100%; max-width: 360px; }}
+  .logo {{ display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }}
+  .logo span {{ font-size: 1.4rem; }}
+  .logo h1 {{ font-size: 1.1rem; letter-spacing: 1px; color: #fff; }}
+  label {{ display: block; font-size: .78rem; color: #aaa; margin-bottom: 6px; letter-spacing: .5px; }}
+  input {{ width: 100%; background: #111; border: 1px solid #333; border-radius: 6px;
+           color: #eee; padding: 10px 12px; font-size: .9rem; margin-bottom: 16px; outline: none; }}
+  input:focus {{ border-color: #e74c3c; }}
+  button {{ width: 100%; background: #e74c3c; color: #fff; border: none; border-radius: 6px;
+            padding: 11px; font-size: .95rem; cursor: pointer; margin-top: 4px; }}
+  button:hover {{ background: #c0392b; }}
+  .error {{ color: #e74c3c; font-size: .8rem; margin-bottom: 14px; text-align: center; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <span>📹</span>
+    <h1>VISIONGUARD</h1>
+  </div>
+  {error_html}
+  <form method="post" action="/login">
+    <label>아이디</label>
+    <input type="text" name="username" autofocus autocomplete="username">
+    <label>비밀번호</label>
+    <input type="password" name="password" autocomplete="current-password">
+    <button type="submit">로그인</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
+@app.post("/login")
+async def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    ok = secrets.compare_digest(username, LOGIN_USERNAME) and \
+         secrets.compare_digest(password, LOGIN_PASSWORD)
+    if ok:
+        request.session["authenticated"] = True
+        return RedirectResponse("/", status_code=302)
+    return RedirectResponse("/login?error=1", status_code=302)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
+
+
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(
@@ -77,8 +162,11 @@ def dashboard():
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111; color: #eee; font-family: 'Segoe UI', sans-serif; }
   header { background: #1a1a2e; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 1.2rem; letter-spacing: 1px; }
+  header h1 { font-size: 1.2rem; letter-spacing: 1px; flex: 1; }
   .badge { background: #e74c3c; color: #fff; border-radius: 4px; padding: 2px 8px; font-size: .75rem; }
+  .logout { color: #aaa; font-size: .8rem; text-decoration: none; padding: 4px 10px;
+            border: 1px solid #444; border-radius: 4px; }
+  .logout:hover { border-color: #e74c3c; color: #e74c3c; }
   .container { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: auto; }
   .video-wrap { background: #000; border-radius: 8px; overflow: hidden; }
   .video-wrap img { width: 100%; display: block; }
@@ -98,6 +186,7 @@ def dashboard():
   <span>📹</span>
   <h1>CCTV 실시간 모니터</h1>
   <span class="badge" id="status">연결 중</span>
+  <a href="/logout" class="logout">로그아웃</a>
 </header>
 <div class="container">
   <div class="video-wrap">
