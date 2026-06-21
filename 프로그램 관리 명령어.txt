@@ -1,0 +1,62 @@
+VisionGuard 작업 스케줄러 명령어 모음
+======================================
+
+
+[ 중지 ]
+실행 중인 VisionGuard를 멈춥니다.
+
+Stop-ScheduledTask -TaskName "VisionGuard"
+
+
+--------------------------------------
+
+[ 수동 시작 ]
+재부팅 없이 지금 바로 실행합니다.
+
+Start-ScheduledTask -TaskName "VisionGuard"
+
+
+--------------------------------------
+
+[ 상태 확인 ]
+현재 실행 중인지 확인합니다.
+
+Get-ScheduledTask -TaskName "VisionGuard" | Select-Object TaskName, State
+
+
+--------------------------------------
+
+[ 삭제 ]
+자동 시작 등록을 완전히 제거합니다.
+(프로그램 자체가 삭제되는 것은 아닙니다)
+
+Unregister-ScheduledTask -TaskName "VisionGuard" -Confirm:$false
+
+
+--------------------------------------
+
+[ 자동 시작 등록 ]
+부팅 시 자동으로 VisionGuard가 실행되도록 등록합니다.
+
+$action = New-ScheduledTaskAction `
+    -Execute "C:\Users\dev\Desktop\VisionGuard\.venv\Scripts\python.exe" `
+    -Argument "main.py" `
+    -WorkingDirectory "C:\Users\dev\Desktop\VisionGuard"
+
+$trigger = New-ScheduledTaskTrigger -AtStartup
+
+$settings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "dev" `
+    -LogonType S4U `
+    -RunLevel Highest
+
+Register-ScheduledTask `
+    -TaskName "VisionGuard" `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -Principal $principal `
+    -Force

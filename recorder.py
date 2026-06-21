@@ -14,7 +14,7 @@ from video_buffer import BufferedFrame
 
 
 def _fourcc():
-    return cv2.VideoWriter_fourcc(*"mp4v")
+    return cv2.VideoWriter_fourcc(*"avc1")
 
 
 class EventRecorder:

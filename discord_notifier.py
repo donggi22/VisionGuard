@@ -16,6 +16,14 @@ class DiscordNotifier:
         if not self._enabled:
             print("[Discord] DISCORD_WEBHOOK_URL not set — notifications disabled.")
 
+    def notify_status(self, message: str):
+        if not self._enabled:
+            return
+        try:
+            requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=10)
+        except Exception as e:
+            print(f"[Discord] 상태 알림 오류: {e}")
+
     def notify(self, frame: np.ndarray, labels: list[str], capture_path: Path = None):
         if not self._enabled:
             return
