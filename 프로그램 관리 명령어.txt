@@ -46,14 +46,17 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -AtStartup
 
 $settings = New-ScheduledTaskSettingsSet `
-    -RestartCount 5 `
-    -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "dev" `
+    -LogonType S4U `
+    -RunLevel Highest
 
 Register-ScheduledTask `
     -TaskName "VisionGuard" `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -RunLevel Highest `
+    -Principal $principal `
     -Force

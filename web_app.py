@@ -84,6 +84,7 @@ def login_page(error: str = ""):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VisionGuard 로그인</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ background: #111; color: #eee; font-family: 'Segoe UI', sans-serif;
@@ -150,6 +151,20 @@ def events():
     return JSONResponse(_event_log)
 
 
+@app.get("/api/recordings")
+def list_recordings():
+    files = sorted(RECORDINGS_DIR.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return JSONResponse([
+        {
+            "name": f.name,
+            "url": f"/recordings/{f.name}",
+            "size_mb": round(f.stat().st_size / 1024 / 1024, 1),
+            "time": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for f in files
+    ])
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     return """<!DOCTYPE html>
@@ -158,6 +173,7 @@ def dashboard():
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CCTV Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111; color: #eee; font-family: 'Segoe UI', sans-serif; }
@@ -170,14 +186,30 @@ def dashboard():
   .container { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: auto; }
   .video-wrap { background: #000; border-radius: 8px; overflow: hidden; }
   .video-wrap img { width: 100%; display: block; }
-  .panel { background: #1a1a1a; border-radius: 8px; padding: 12px; overflow-y: auto; max-height: 80vh; }
-  .panel h2 { font-size: .9rem; color: #aaa; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .panel { background: #1a1a1a; border-radius: 8px; overflow: hidden; max-height: 80vh; display: flex; flex-direction: column; }
+  .tabs { display: flex; border-bottom: 1px solid #2a2a2a; }
+  .tab { padding: 10px 16px; font-size: .8rem; color: #888; cursor: pointer; letter-spacing: .5px; }
+  .tab.active { color: #eee; border-bottom: 2px solid #e74c3c; }
+  .tab-content { padding: 12px; overflow-y: auto; flex: 1; display: none; }
+  .tab-content.active { display: block; }
   .event { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #2a2a2a; }
   .event img { width: 80px; height: 60px; object-fit: cover; border-radius: 4px; cursor: pointer; }
-  .event .meta { font-size: .8rem; }
+  .event .meta { font-size: .8rem; flex: 1; }
   .event .label { color: #e74c3c; font-weight: bold; margin-bottom: 2px; }
   .event .time { color: #888; }
-  .no-img { width: 80px; height: 60px; background: #2a2a2a; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: .65rem; color: #666; }
+  .no-img { width: 80px; height: 60px; background: #2a2a2a; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: .65rem; color: #666; flex-shrink: 0; }
+  .rec-item { padding: 10px 0; border-bottom: 1px solid #2a2a2a; cursor: pointer; }
+  .rec-item:hover .rec-name { color: #e74c3c; }
+  .rec-name { font-size: .82rem; color: #ddd; margin-bottom: 3px; word-break: break-all; }
+  .rec-meta { font-size: .74rem; color: #666; display: flex; gap: 12px; }
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 100; align-items: center; justify-content: center; }
+  .modal.open { display: flex; }
+  .modal-inner { background: #1a1a1a; border-radius: 10px; padding: 16px; max-width: 90vw; width: 800px; }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .modal-title { font-size: .85rem; color: #aaa; word-break: break-all; }
+  .modal-close { cursor: pointer; color: #888; font-size: 1.2rem; line-height: 1; padding: 4px 8px; }
+  .modal-close:hover { color: #e74c3c; }
+  .modal video { width: 100%; border-radius: 6px; background: #000; }
   @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -193,11 +225,37 @@ def dashboard():
     <img id="feed" src="/video_feed" onload="document.getElementById('status').textContent='LIVE'" onerror="document.getElementById('status').textContent='오프라인'">
   </div>
   <div class="panel">
-    <h2>감지 이벤트</h2>
-    <div id="events"></div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('events')">감지 이벤트</div>
+      <div class="tab" onclick="switchTab('recordings')">녹화 목록</div>
+    </div>
+    <div id="tab-events" class="tab-content active">
+      <div id="events"></div>
+    </div>
+    <div id="tab-recordings" class="tab-content">
+      <div id="recordings"></div>
+    </div>
   </div>
 </div>
+
+<div class="modal" id="modal" onclick="closeModal(event)">
+  <div class="modal-inner">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title"></span>
+      <span class="modal-close" onclick="closeModal()">✕</span>
+    </div>
+    <video id="modal-video" controls autoplay></video>
+  </div>
+</div>
+
 <script>
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['events','recordings'][i] === name));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'recordings') loadRecordings();
+  }
+
   async function loadEvents() {
     try {
       const r = await fetch('/events');
@@ -214,6 +272,38 @@ def dashboard():
         </div>`).join('');
     } catch {}
   }
+
+  async function loadRecordings() {
+    try {
+      const r = await fetch('/api/recordings');
+      const data = await r.json();
+      const el = document.getElementById('recordings');
+      if (!data.length) { el.innerHTML = '<p style="color:#555;font-size:.8rem;padding:8px 0">녹화 파일 없음</p>'; return; }
+      el.innerHTML = data.map(f => `
+        <div class="rec-item" onclick="playVideo('${f.url}', '${f.name}')">
+          <div class="rec-name">▶ ${f.name}</div>
+          <div class="rec-meta">
+            <span>${f.time}</span>
+            <span>${f.size_mb} MB</span>
+          </div>
+        </div>`).join('');
+    } catch {}
+  }
+
+  function playVideo(url, name) {
+    document.getElementById('modal-title').textContent = name;
+    document.getElementById('modal-video').src = url;
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal(e) {
+    if (e && e.target !== document.getElementById('modal')) return;
+    document.getElementById('modal').classList.remove('open');
+    const v = document.getElementById('modal-video');
+    v.pause();
+    v.src = '';
+  }
+
   loadEvents();
   setInterval(loadEvents, 5000);
 </script>
