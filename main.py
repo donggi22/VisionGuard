@@ -58,6 +58,7 @@ def main():
     yolo = YoloDetector()
     recorder = EventRecorder()
     discord = DiscordNotifier()
+    discord.notify_status("✅ VisionGuard 가동됨")
 
     # 이벤트 발생 시 뒤쪽 프레임을 채워줄 shared queue
     post_frame_queue: list = []
@@ -73,6 +74,7 @@ def main():
     # Ctrl+C 처리
     def _sigint(sig, frame):
         print("\n[CCTV] 종료 중...")
+        discord.notify_status("⏹️ VisionGuard 종료됨")
         cap.release()
         sys.exit(0)
 

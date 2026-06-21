@@ -1,31 +1,6 @@
 VisionGuard 작업 스케줄러 명령어 모음
 ======================================
 
-[ 자동 시작 등록 ]
-부팅 시 자동으로 VisionGuard가 실행되도록 등록합니다.
-
-$action = New-ScheduledTaskAction `
-    -Execute "C:\Users\dev\Desktop\VisionGuard\.venv\Scripts\python.exe" `
-    -Argument "main.py" `
-    -WorkingDirectory "C:\Users\dev\Desktop\VisionGuard"
-
-$trigger = New-ScheduledTaskTrigger -AtStartup
-
-$settings = New-ScheduledTaskSettingsSet `
-    -RestartCount 5 `
-    -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit ([TimeSpan]::Zero)
-
-Register-ScheduledTask `
-    -TaskName "VisionGuard" `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -RunLevel Highest `
-    -Force
-
-
---------------------------------------
 
 [ 중지 ]
 실행 중인 VisionGuard를 멈춥니다.
@@ -56,3 +31,29 @@ Get-ScheduledTask -TaskName "VisionGuard" | Select-Object TaskName, State
 (프로그램 자체가 삭제되는 것은 아닙니다)
 
 Unregister-ScheduledTask -TaskName "VisionGuard" -Confirm:$false
+
+
+--------------------------------------
+
+[ 자동 시작 등록 ]
+부팅 시 자동으로 VisionGuard가 실행되도록 등록합니다.
+
+$action = New-ScheduledTaskAction `
+    -Execute "C:\Users\dev\Desktop\VisionGuard\.venv\Scripts\python.exe" `
+    -Argument "main.py" `
+    -WorkingDirectory "C:\Users\dev\Desktop\VisionGuard"
+
+$trigger = New-ScheduledTaskTrigger -AtStartup
+
+$settings = New-ScheduledTaskSettingsSet `
+    -RestartCount 5 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+Register-ScheduledTask `
+    -TaskName "VisionGuard" `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -RunLevel Highest `
+    -Force
