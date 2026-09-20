@@ -2,4 +2,6 @@
 /captures
 /recordings
 .venv
-__pycache__
+__pycache__/
+yolov8n_openvino_model/
+yolov8n.pt
