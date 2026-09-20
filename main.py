@@ -9,14 +9,17 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import uvicorn
 
+import numpy as np
+
 import web_app
 from config import (
     CAMERA_INDEX, FPS, FRAME_WIDTH, FRAME_HEIGHT, WEB_HOST, WEB_PORT,
-    MOTION_ONLY_ALERT, POST_RECORD_SECONDS,
+    ALERT_COOLDOWN_SECONDS, POST_RECORD_SECONDS,
 )
 from discord_notifier import DiscordNotifier
 from motion_detector import MotionDetector
@@ -39,6 +42,41 @@ def _start_web_server():
         port=WEB_PORT,
         log_level="warning",
     )
+
+
+def _verify_and_notify(
+    yolo: YoloDetector,
+    frame: np.ndarray,
+    capture_path: Path,
+    discord: DiscordNotifier,
+):
+    """
+    이미 캡처/녹화가 끝난 프레임을 뒤늦게 YOLO로 검증한다.
+    CPU 추론 지연이 캡처 타이밍에 영향을 주지 않도록 별도 스레드에서 실행되며,
+    ALERT_CLASSES에 해당하는 객체가 실제로 확인된 경우에만 알림/로그를 남긴다.
+    """
+    detections = yolo.detect(frame)
+    if not detections:
+        print("  └ YOLO 미확인 — 오탐으로 판단, 알림 생략")
+        return
+
+    labels = [d.label for d in detections]
+    label_str = "+".join(labels)
+    annotated = yolo.draw(frame.copy(), detections, {d.label for d in detections})
+
+    # 캡쳐 파일명을 임시 라벨(_motion)에서 확인된 실제 클래스명으로 변경
+    primary_label = labels[0]
+    renamed_path = capture_path.with_name(
+        capture_path.name.replace("_motion.", f"_{primary_label}.")
+    )
+    try:
+        capture_path = capture_path.rename(renamed_path)
+    except OSError as e:
+        print(f"  └ 캡쳐 파일명 변경 실패 (경로는 원본 유지): {e}")
+
+    print(f"  └ YOLO 확인됨: {label_str} — 알림 전송")
+    discord.notify(annotated, labels, capture_path)
+    web_app.add_event(label_str, capture_path)
 
 
 def main():
@@ -104,44 +142,25 @@ def main():
         display = frame.copy()
         motion_det.draw_roi(display)
 
-        if motion:
-            # --- YOLO 실행 (어노테이션 + 클래스 식별) ---
-            detections, new_objects = yolo.detect(frame)
-            highlight = {d.label for d in new_objects}
-            yolo.draw(display, detections, highlight)
+        if motion and (time.time() - _last_motion_alert[0]) >= ALERT_COOLDOWN_SECONDS:
+            _last_motion_alert[0] = time.time()
+            trigger_frame = frame.copy()
 
-            # 알림 조건 결정
-            if MOTION_ONLY_ALERT:
-                # 모션 감지만으로 알림, 쿨타임은 yolo의 last_alert 대신 별도 관리
-                should_alert = (time.time() - _last_motion_alert[0]) >= 30
-                labels = [d.label for d in detections] or ["motion"]
-                trigger_frame = frame.copy()
-                if detections:
-                    yolo.draw(trigger_frame, detections, highlight)
-            else:
-                should_alert = bool(new_objects)
-                labels = [d.label for d in new_objects]
-                trigger_frame = yolo.draw(frame.copy(), new_objects, highlight)
+            # 1) 선(先) 캡처: YOLO 결과를 기다리지 않고 즉시 캡쳐 + 녹화 시작/연장
+            #    (CPU 추론 지연 때문에 객체가 지나간 뒤에 캡쳐되는 것을 방지)
+            capture_path = recorder.save_capture(trigger_frame, "motion")
+            pre_frames = video_buf.snapshot()
+            rec_path = recorder.trigger_recording(pre_frames, "motion")
 
-            if should_alert:
-                label_str = "+".join(labels)
-                print(f"[이벤트] {datetime.now().strftime('%H:%M:%S')} 감지: {label_str}")
+            status = "신규 녹화" if rec_path is not None else f"기존 녹화 +{POST_RECORD_SECONDS}초 연장"
+            print(f"[모션] {datetime.now().strftime('%H:%M:%S')} 캡쳐됨 ({status}) — YOLO 검증 대기")
 
-                if MOTION_ONLY_ALERT:
-                    _last_motion_alert[0] = time.time()
-
-                # 이벤트 영상 녹화 시작 (이미 녹화 중이면 종료 시간만 연장되고 None 반환)
-                pre_frames = video_buf.snapshot()
-                rec_path = recorder.trigger_recording(pre_frames, label_str)
-
-                if rec_path is not None:
-                    # 새 녹화가 시작된 경우에만 캡쳐 저장 / 알림 / 로그 기록
-                    capture_path = recorder.save_capture(trigger_frame, label_str)
-                    discord.notify(trigger_frame, labels, capture_path)
-                    web_app.add_event(label_str, capture_path)
-                else:
-                    # 기존 녹화가 연장된 것뿐이므로 중복 캡처/알림 생략
-                    print(f"  └ 기존 녹화 연장 (+{POST_RECORD_SECONDS}초)")
+            # 2) 후(後) YOLO 비동기 검증: 별도 스레드에서 확인된 경우에만 알림/로그 전송
+            threading.Thread(
+                target=_verify_and_notify,
+                args=(yolo, trigger_frame, capture_path, discord),
+                daemon=True,
+            ).start()
 
         # 상태 오버레이 표시
         ts_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

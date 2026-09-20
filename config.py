@@ -21,6 +21,7 @@ MOTION_MIN_FRAMES = int(os.getenv("MOTION_MIN_FRAMES", "3"))   # 연속 N프레�
 # YOLO
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
 YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.4"))
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "320"))  # 추론 해상도 축소로 CPU 연산량 절감
 
 # Recording
 PRE_RECORD_SECONDS = int(os.getenv("PRE_RECORD_SECONDS", "10"))
@@ -45,7 +46,3 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "please-set-a-secret-in-env")
 # YOLO 클래스 중 알림 대상 (비어있으면 전체)
 # COCO 클래스: person=0, car=2, cat=15, dog=16 등
 ALERT_CLASSES = os.getenv("ALERT_CLASSES", "person,car,cat,dog").split(",")
-
-# True: 모션 감지만으로 알림 (YOLO는 어노테이션 용도)
-# False: YOLO가 객체를 인식해야만 알림
-MOTION_ONLY_ALERT = os.getenv("MOTION_ONLY_ALERT", "false").lower() == "true"

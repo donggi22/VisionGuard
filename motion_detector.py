@@ -9,7 +9,7 @@ class MotionDetector:
         roi: (x, y, w, h) — 감지 구역 지정. None이면 전체 화면.
         """
         self._bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-            history=500, varThreshold=25, detectShadows=False
+            history=500, varThreshold=35, detectShadows=True
         )
         self._roi = roi
         self._consecutive = 0  # 연속 모션 프레임 카운터
@@ -24,11 +24,18 @@ class MotionDetector:
         work = frame if self._roi is None else self._crop(frame)
 
         mask = self._bg_subtractor.apply(work)
+
+        # 그림자는 127로 표시되므로 임계값을 높여 순수 객체(255)만 남김
+        _, mask = cv2.threshold(mask, 250, 255, cv2.THRESH_BINARY)
+
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kernel)
         mask = cv2.dilate(mask, self._kernel, iterations=2)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        motion_area = sum(cv2.contourArea(c) for c in contours)
+
+        # 자잘한 빛 노이즈 다수 합산 방지: 500px² 이상인 의미 있는 덩어리만 집계
+        meaningful_contours = [c for c in contours if cv2.contourArea(c) > 500]
+        motion_area = sum(cv2.contourArea(c) for c in meaningful_contours)
 
         if motion_area >= MOTION_THRESHOLD:
             self._consecutive += 1
