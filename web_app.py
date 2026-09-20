@@ -2,6 +2,7 @@ import asyncio
 import io
 import secrets
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from config import CAPTURES_DIR, RECORDINGS_DIR, LOGIN_USERNAME, LOGIN_PASSWORD, SESSION_SECRET
+
+# 2코어 환경에서 imencode의 내부 멀티스레딩이 메인 처리 루프와 경합하는 것을 방지
+cv2.setNumThreads(1)
 
 CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,15 +44,41 @@ app.mount("/captures", StaticFiles(directory=str(CAPTURES_DIR)), name="captures"
 app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recordings")
 
 # 메인 루프에서 이 값을 갱신
-_current_frame: np.ndarray | None = None
-_frame_lock = threading.Lock()
+_current_jpeg: bytes | None = None
+_frame_condition = threading.Condition()
+_last_encoded_time = 0.0
 _event_log: list[dict] = []  # 최근 이벤트 (최대 50개)
+
+TARGET_FPS = 15          # 웹 스트리밍 목표 FPS (2코어 환경 기준)
+JPEG_QUALITY = 60        # 압축 품질
+STREAM_WIDTH = 640       # 웹 표시용 가로 해상도 (None이면 원본 유지)
 
 
 def update_frame(frame: np.ndarray):
-    global _current_frame
-    with _frame_lock:
-        _current_frame = frame.copy()
+    """메인 루프에서 새 프레임이 나올 때 호출. 여기서 1회만 인코딩해서 모든 접속자가 공유."""
+    global _current_jpeg, _last_encoded_time
+
+    now = time.monotonic()
+    if (now - _last_encoded_time) < (1.0 / TARGET_FPS):
+        return
+    _last_encoded_time = now
+
+    if STREAM_WIDTH is not None and frame.shape[1] > STREAM_WIDTH:
+        h, w = frame.shape[:2]
+        new_h = int(h * (STREAM_WIDTH / w))
+        frame = cv2.resize(frame, (STREAM_WIDTH, new_h), interpolation=cv2.INTER_AREA)
+
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if not ok:
+        return
+    jpeg_packet = (
+        b"--frame\r\n"
+        b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+    )
+
+    with _frame_condition:
+        _current_jpeg = jpeg_packet
+        _frame_condition.notify_all()
 
 
 def add_event(label: str, capture_path: Path):
@@ -63,16 +93,18 @@ def add_event(label: str, capture_path: Path):
 
 
 def _jpeg_generator():
-    while True:
-        with _frame_lock:
-            frame = _current_frame
-        if frame is None:
-            continue
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-        )
+    """접속자별 스트리밍 제너레이터. 이미 인코딩된 바이트만 전달하므로 접속자가 늘어도 인코딩 비용은 그대로."""
+    try:
+        while True:
+            with _frame_condition:
+                if not _frame_condition.wait(timeout=1.0):
+                    continue
+                data = _current_jpeg
+            if data is not None:
+                yield data
+    except GeneratorExit:
+        # 클라이언트가 연결을 끊었을 때 정상 종료
+        pass
 
 
 @app.get("/login", response_class=HTMLResponse)
