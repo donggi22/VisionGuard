@@ -31,6 +31,10 @@ POST_RECORD_SECONDS = int(os.getenv("POST_RECORD_SECONDS", "10"))
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "30"))
 
+# YOLO 사후 검증: 모션 트리거 시각 기준 앞뒤로 여러 프레임을 샘플링해 확인
+VERIFY_WINDOW_SECONDS = float(os.getenv("VERIFY_WINDOW_SECONDS", "1.0"))  # 트리거 기준 앞뒤 각각(초)
+VERIFY_SAMPLE_COUNT = int(os.getenv("VERIFY_SAMPLE_COUNT", "6"))          # 검증에 쓸 총 샘플 프레임 수
+
 # Storage cleanup
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 

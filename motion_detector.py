@@ -38,8 +38,15 @@ class MotionDetector:
         motion_area = sum(cv2.contourArea(c) for c in meaningful_contours)
 
         if motion_area >= MOTION_THRESHOLD:
+            if self._consecutive == 0:
+                print(f"[모션감지-진단] 임계값 통과 area={motion_area:.0f} (threshold={MOTION_THRESHOLD})")
             self._consecutive += 1
         else:
+            if self._consecutive > 0:
+                print(
+                    f"[모션감지-진단] {self._consecutive}프레임 만에 소실"
+                    f" (min_frames={MOTION_MIN_FRAMES} 못 채움, area={motion_area:.0f})"
+                )
             self._consecutive = 0
 
         detected = self._consecutive >= MOTION_MIN_FRAMES
