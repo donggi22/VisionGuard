@@ -16,7 +16,7 @@ import uvicorn
 import web_app
 from config import (
     CAMERA_INDEX, FPS, FRAME_WIDTH, FRAME_HEIGHT, WEB_HOST, WEB_PORT,
-    MOTION_ONLY_ALERT,
+    MOTION_ONLY_ALERT, POST_RECORD_SECONDS,
 )
 from discord_notifier import DiscordNotifier
 from motion_detector import MotionDetector
@@ -60,9 +60,6 @@ def main():
     discord = DiscordNotifier()
     discord.notify_status("✅ VisionGuard 가동됨")
 
-    # 이벤트 발생 시 뒤쪽 프레임을 채워줄 shared queue
-    post_frame_queue: list = []
-
     # 웹 서버 백그라운드 스레드
     web_thread = threading.Thread(target=_start_web_server, daemon=True)
     web_thread.start()
@@ -81,7 +78,6 @@ def main():
     signal.signal(signal.SIGINT, _sigint)
 
     frame_interval = 1.0 / FPS
-    recording_until = 0.0
     _last_motion_alert = [0.0]  # list로 감싸서 중첩 스코프에서 수정 가능하게
 
     print("[CCTV] 루프 시작. Ctrl+C 로 종료.")
@@ -100,9 +96,8 @@ def main():
         # 순환 버퍼에 항상 push
         video_buf.push(frame)
 
-        # post-record 중이면 queue에도 push
-        if time.time() < recording_until:
-            post_frame_queue.append(frame.copy())
+        # 녹화 중이면 recorder의 프레임 큐에도 push
+        recorder.push_frame(frame)
 
         # --- 모션 감지 ---
         motion, mask = motion_det.update(frame)
@@ -135,19 +130,18 @@ def main():
                 if MOTION_ONLY_ALERT:
                     _last_motion_alert[0] = time.time()
 
-                # 캡쳐 저장
-                capture_path = recorder.save_capture(trigger_frame, label_str)
-
-                # 이벤트 영상 녹화 시작
+                # 이벤트 영상 녹화 시작 (이미 녹화 중이면 종료 시간만 연장되고 None 반환)
                 pre_frames = video_buf.snapshot()
-                recorder.start_event_recording(pre_frames, post_frame_queue, label_str)
-                recording_until = time.time() + 10
+                rec_path = recorder.trigger_recording(pre_frames, label_str)
 
-                # Discord 알림
-                discord.notify(trigger_frame, labels, capture_path)
-
-                # 웹 이벤트 로그 업데이트
-                web_app.add_event(label_str, capture_path)
+                if rec_path is not None:
+                    # 새 녹화가 시작된 경우에만 캡쳐 저장 / 알림 / 로그 기록
+                    capture_path = recorder.save_capture(trigger_frame, label_str)
+                    discord.notify(trigger_frame, labels, capture_path)
+                    web_app.add_event(label_str, capture_path)
+                else:
+                    # 기존 녹화가 연장된 것뿐이므로 중복 캡처/알림 생략
+                    print(f"  └ 기존 녹화 연장 (+{POST_RECORD_SECONDS}초)")
 
         # 상태 오버레이 표시
         ts_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

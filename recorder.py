@@ -1,4 +1,5 @@
 import cv2
+import queue
 import threading
 import time
 from datetime import datetime, timedelta
@@ -18,11 +19,17 @@ def _fourcc():
 
 
 class EventRecorder:
-    """이벤트 발생 시 앞 N초(버퍼) + 뒤 N초 영상을 비동기로 저장."""
+    """이벤트 발생 시 앞 N초(버퍼) + 뒤 N초 영상을 단일 스레드로 안정적으로 저장."""
 
     def __init__(self):
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
         CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+        self._frame_queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=FPS * 30)
+        self._record_thread: threading.Thread | None = None
+        self._record_deadline: float = 0.0
+        self._is_recording: bool = False
+        self._lock = threading.Lock()
 
     def save_capture(self, frame: np.ndarray, label: str) -> Path:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -30,44 +37,73 @@ class EventRecorder:
         cv2.imwrite(str(path), frame)
         return path
 
-    def start_event_recording(
-        self,
-        pre_frames: list[BufferedFrame],
-        frame_queue_ref: list,  # main loop이 이후 프레임을 append하는 shared list
-        event_label: str,
-    ) -> Path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = RECORDINGS_DIR / f"{ts}_{event_label}.mp4"
-        t = threading.Thread(
-            target=self._write_video,
-            args=(path, pre_frames, frame_queue_ref),
-            daemon=True,
-        )
-        t.start()
-        return path
+    def push_frame(self, frame: np.ndarray):
+        """메인 루프에서 매 프레임 호출하여 녹화 큐에 프레임을 전달합니다."""
+        if self._is_recording:
+            try:
+                self._frame_queue.put_nowait(frame.copy())
+            except queue.Full:
+                pass
 
-    def _write_video(
+    def trigger_recording(
         self,
-        path: Path,
         pre_frames: list[BufferedFrame],
-        frame_queue_ref: list,
-    ):
+        event_label: str,
+    ) -> Path | None:
+        """
+        이벤트 발생 시 호출.
+        - 이미 녹화 중이면 종료 시간을 연장합니다.
+        - 녹화 중이 아니면 새 녹화 스레드를 시작합니다.
+        """
+        now = time.time()
+        with self._lock:
+            if self._is_recording:
+                self._record_deadline = now + POST_RECORD_SECONDS
+                return None
+
+            self._is_recording = True
+            self._record_deadline = now + POST_RECORD_SECONDS
+
+            while not self._frame_queue.empty():
+                try:
+                    self._frame_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = RECORDINGS_DIR / f"{ts}_{event_label}.mp4"
+            pre_frame_copies = [bf.frame.copy() for bf in pre_frames]
+
+            self._record_thread = threading.Thread(
+                target=self._record_worker,
+                args=(path, pre_frame_copies),
+                daemon=True,
+            )
+            self._record_thread.start()
+            return path
+
+    def _record_worker(self, path: Path, pre_frames: list[np.ndarray]):
         writer = cv2.VideoWriter(
             str(path), _fourcc(), FPS, (FRAME_WIDTH, FRAME_HEIGHT)
         )
-        # 앞쪽 버퍼 쓰기
-        for bf in pre_frames:
-            writer.write(bf.frame)
+        try:
+            for frame in pre_frames:
+                writer.write(frame)
 
-        # 뒤쪽 POST_RECORD_SECONDS 동안 새 프레임 수집
-        deadline = time.time() + POST_RECORD_SECONDS
-        while time.time() < deadline:
-            if frame_queue_ref:
-                writer.write(frame_queue_ref.pop(0))
-            else:
-                time.sleep(1 / FPS)
-
-        writer.release()
+            while True:
+                with self._lock:
+                    deadline = self._record_deadline
+                if time.time() >= deadline:
+                    break
+                try:
+                    frame = self._frame_queue.get(timeout=0.1)
+                    writer.write(frame)
+                except queue.Empty:
+                    continue
+        finally:
+            writer.release()
+            with self._lock:
+                self._is_recording = False
 
     def cleanup_old_files(self):
         """RETENTION_DAYS 이상 된 파일 삭제."""
