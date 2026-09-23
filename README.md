@@ -4,9 +4,10 @@
 ├── main.py              # 메인 루프 (모든 컴포넌트 통합)
 ├── config.py            # 환경변수 기반 설정
 ├── motion_detector.py   # MOG2 배경 차분 모션 감지
-├── video_buffer.py      # deque 순환 버퍼 (앞 10초)
+├── camera.py            # RTSP 수신 스레드 (패킷 → 녹화, 최신 프레임 → 분석)
+├── video_buffer.py      # H.264 패킷 순환 버퍼 (앞 10초, 키프레임 정렬)
 ├── yolo_detector.py     # YOLOv8n + 쿨타임 기반 새 객체 추적
-├── recorder.py          # 이벤트 전후 10초 비동기 녹화 + 자동 정리
+├── recorder.py          # 이벤트 전후 10초 녹화 (재인코딩 없이 remux, 겹치면 연장) + 자동 정리
 ├── discord_notifier.py  # Webhook + 이미지 첨부 비동기 전송
 ├── web_app.py           # FastAPI MJPEG 스트리밍 + 이벤트 대시보드
 ├── requirements.txt

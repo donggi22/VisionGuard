@@ -7,6 +7,7 @@ CAPTURES_DIR = BASE_DIR / "captures"
 
 # Camera
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_URL = os.getenv("CAMERA_URL", "")
 FPS = int(os.getenv("FPS", "15"))
 FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", "640"))
 FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "480"))
@@ -22,6 +23,8 @@ YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.4"))
 # Recording
 PRE_RECORD_SECONDS = int(os.getenv("PRE_RECORD_SECONDS", "10"))
 POST_RECORD_SECONDS = int(os.getenv("POST_RECORD_SECONDS", "10"))
+# 녹화 중 이벤트가 이어지면 파일을 연장하되, 이 길이를 넘으면 새 파일로 분할
+MAX_RECORD_SECONDS = int(os.getenv("MAX_RECORD_SECONDS", "300"))
 
 # Alerts
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")

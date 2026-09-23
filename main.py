@@ -14,14 +14,14 @@ import cv2
 import uvicorn
 
 import web_app
+from camera import CameraStream
 from config import (
-    CAMERA_INDEX, FPS, FRAME_WIDTH, FRAME_HEIGHT, WEB_HOST, WEB_PORT,
+    CAMERA_URL, FPS, FRAME_WIDTH, FRAME_HEIGHT, WEB_HOST, WEB_PORT,
     MOTION_ONLY_ALERT,
 )
 from discord_notifier import DiscordNotifier
 from motion_detector import MotionDetector
 from recorder import EventRecorder
-from video_buffer import VideoBuffer
 from yolo_detector import YoloDetector
 
 
@@ -42,25 +42,20 @@ def _start_web_server():
 
 
 def main():
-    print(f"[CCTV] 시작 — 카메라 {CAMERA_INDEX}, 웹 http://{WEB_HOST}:{WEB_PORT}")
+    print(f"[CCTV] 시작 | 웹 http://{WEB_HOST}:{WEB_PORT}")
+
+    if not CAMERA_URL:
+        sys.exit("[오류] CAMERA_URL 이 설정되지 않았습니다")
 
     # 컴포넌트 초기화
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, FPS)
-
-    if not cap.isOpened():
-        sys.exit(f"[오류] 카메라 {CAMERA_INDEX} 열기 실패")
-
     motion_det = MotionDetector()
-    video_buf = VideoBuffer()
     yolo = YoloDetector()
     recorder = EventRecorder()
     discord = DiscordNotifier()
 
-    # 이벤트 발생 시 뒤쪽 프레임을 채워줄 shared queue
-    post_frame_queue: list = []
+    # 카메라 스레드: 패킷은 recorder로 바로 전달, 디코딩된 최신 프레임만 보관
+    cam = CameraStream(CAMERA_URL, recorder.on_packet, recorder.on_disconnect)
+    cam.start()
 
     # 웹 서버 백그라운드 스레드
     web_thread = threading.Thread(target=_start_web_server, daemon=True)
@@ -73,13 +68,13 @@ def main():
     # Ctrl+C 처리
     def _sigint(sig, frame):
         print("\n[CCTV] 종료 중...")
-        cap.release()
+        cam.stop()
+        recorder.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _sigint)
 
     frame_interval = 1.0 / FPS
-    recording_until = 0.0
     _last_motion_alert = [0.0]  # list로 감싸서 중첩 스코프에서 수정 가능하게
 
     print("[CCTV] 루프 시작. Ctrl+C 로 종료.")
@@ -87,20 +82,10 @@ def main():
     while True:
         loop_start = time.time()
 
-        ret, frame = cap.read()
-        if not ret:
-            print("[경고] 프레임 읽기 실패, 재시도...")
-            time.sleep(0.5)
+        frame = cam.read(FRAME_WIDTH, FRAME_HEIGHT)
+        if frame is None:
+            print("[경고] 새 프레임 없음, 대기 중...")
             continue
-
-        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-
-        # 순환 버퍼에 항상 push
-        video_buf.push(frame)
-
-        # post-record 중이면 queue에도 push
-        if time.time() < recording_until:
-            post_frame_queue.append(frame.copy())
 
         # --- 모션 감지 ---
         motion, mask = motion_det.update(frame)
@@ -136,10 +121,8 @@ def main():
                 # 캡쳐 저장
                 capture_path = recorder.save_capture(trigger_frame, label_str)
 
-                # 이벤트 영상 녹화 시작
-                pre_frames = video_buf.snapshot()
-                recorder.start_event_recording(pre_frames, post_frame_queue, label_str)
-                recording_until = time.time() + 10
+                # 이벤트 영상 녹화 시작 (녹화 중이면 연장)
+                recorder.trigger(label_str)
 
                 # Discord 알림
                 discord.notify(trigger_frame, labels, capture_path)
