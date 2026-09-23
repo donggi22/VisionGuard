@@ -16,16 +16,36 @@ app = FastAPI(title="CCTV Dashboard")
 app.mount("/captures", StaticFiles(directory=str(CAPTURES_DIR)), name="captures")
 app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recordings")
 
-# 메인 루프에서 이 값을 갱신
-_current_frame: np.ndarray | None = None
-_frame_lock = threading.Lock()
+# 메인 루프가 새 프레임을 넣으면 조건변수로 모든 접속자에게 알림.
+# JPEG 인코딩은 새 프레임당 1번만 (첫 접속자가 수행, 나머지는 캐시 공유) →
+# 접속자 수와 무관하게 인코딩 CPU 고정, 시청자가 없으면 인코딩 안 함.
+_frame_cond = threading.Condition()
+_raw_frame: np.ndarray | None = None
+_raw_seq = 0
+_jpeg: bytes | None = None
+_jpeg_seq = 0
 _event_log: list[dict] = []  # 최근 이벤트 (최대 50개)
 
 
 def update_frame(frame: np.ndarray):
-    global _current_frame
-    with _frame_lock:
-        _current_frame = frame.copy()
+    """frame은 호출 후 수정하지 않아야 함 (복사 없이 참조만 보관)."""
+    global _raw_frame, _raw_seq
+    with _frame_cond:
+        _raw_frame = frame
+        _raw_seq += 1
+        _frame_cond.notify_all()
+
+
+def _next_jpeg(last_seq: int, timeout: float = 5.0) -> tuple[bytes | None, int]:
+    """last_seq 이후의 새 프레임 JPEG를 기다려 반환. timeout 동안 없으면 (None, last_seq)."""
+    global _jpeg, _jpeg_seq
+    with _frame_cond:
+        if not _frame_cond.wait_for(lambda: _raw_seq != last_seq, timeout):
+            return None, last_seq
+        if _jpeg_seq != _raw_seq:
+            _, buf = cv2.imencode(".jpg", _raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            _jpeg, _jpeg_seq = buf.tobytes(), _raw_seq
+        return _jpeg, _jpeg_seq
 
 
 def add_event(label: str, capture_path: Path):
@@ -40,15 +60,14 @@ def add_event(label: str, capture_path: Path):
 
 
 def _jpeg_generator():
+    seq = 0
     while True:
-        with _frame_lock:
-            frame = _current_frame
-        if frame is None:
-            continue
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        jpeg, seq = _next_jpeg(seq)
+        if jpeg is None:
+            continue  # 카메라 정지 등으로 새 프레임 없음 — 바쁜 대기 없이 다시 대기
         yield (
             b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
         )
 
 
