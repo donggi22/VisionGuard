@@ -6,9 +6,10 @@
 ├── motion_detector.py   # MOG2 배경 차분 모션 감지
 ├── camera.py            # RTSP 수신 스레드 (패킷 → 녹화, 최신 프레임 → 분석)
 ├── video_buffer.py      # H.264 패킷 순환 버퍼 (앞 10초, 키프레임 정렬)
-├── yolo_detector.py     # YOLOv8n + 쿨타임 기반 새 객체 추적
+├── event_analyzer.py    # 모션 시점 앞뒤 캡쳐(±1초, 0.4초 간격 7장) → YOLO → 알림/녹화
+├── yolo_detector.py     # YOLOv8n 배치 검출 + 바운딩박스 그리기
 ├── recorder.py          # 이벤트 전후 10초 녹화 (재인코딩 없이 remux, 겹치면 연장) + 자동 정리
-├── discord_notifier.py  # Webhook + 이미지 첨부 비동기 전송
+├── discord_notifier.py  # Webhook + 여러 이미지 첨부 비동기 전송
 ├── web_app.py           # FastAPI MJPEG 스트리밍 + 이벤트 대시보드
 ├── requirements.txt
 ├── .env.example

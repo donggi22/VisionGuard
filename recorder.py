@@ -100,8 +100,8 @@ class EventRecorder:
         self._session: _Session | None = None
         self._writers: list[threading.Thread] = []
 
-    def save_capture(self, frame: np.ndarray, label: str) -> Path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def save_capture(self, frame: np.ndarray, label: str, ts: str | None = None) -> Path:
+        ts = ts or datetime.now().strftime("%Y%m%d_%H%M%S")
         path = CAPTURES_DIR / f"{ts}_{label}.jpg"
         cv2.imwrite(str(path), frame)
         return path

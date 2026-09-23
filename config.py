@@ -20,6 +20,10 @@ MOTION_MIN_FRAMES = int(os.getenv("MOTION_MIN_FRAMES", "3"))   # 연속 N프레�
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
 YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.4"))
 
+# 모션 감지 시점 기준 YOLO로 분석할 프레임 시점(초): 앞뒤 1초, 0.4초 간격 6장 + 감지 시점 1장
+CAPTURE_OFFSETS = [float(x) for x in os.getenv(
+    "CAPTURE_OFFSETS", "-1.0,-0.6,-0.2,0,0.2,0.6,1.0").split(",")]
+
 # Recording
 PRE_RECORD_SECONDS = int(os.getenv("PRE_RECORD_SECONDS", "10"))
 POST_RECORD_SECONDS = int(os.getenv("POST_RECORD_SECONDS", "10"))

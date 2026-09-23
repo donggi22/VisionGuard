@@ -1,7 +1,6 @@
 import io
 import threading
 from datetime import datetime
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -16,26 +15,26 @@ class DiscordNotifier:
         if not self._enabled:
             print("[Discord] DISCORD_WEBHOOK_URL not set — notifications disabled.")
 
-    def notify(self, frame: np.ndarray, labels: list[str], capture_path: Path = None):
+    def notify(self, images: list[tuple[str, np.ndarray]], labels: list[str], when: datetime):
+        """images: (파일명, 프레임) 목록. 한 메시지에 최대 10장까지 첨부."""
         if not self._enabled:
             return
         t = threading.Thread(
             target=self._send,
-            args=(frame.copy(), labels, capture_path),
+            args=(images[:10], labels, when),
             daemon=True,
         )
         t.start()
 
-    def _send(self, frame: np.ndarray, labels: list[str], capture_path: Path):
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def _send(self, images: list[tuple[str, np.ndarray]], labels: list[str], when: datetime):
+        ts = when.strftime("%Y-%m-%d %H:%M:%S")
         label_str = ", ".join(labels)
-        content = f"🚨 **감지됨** `{label_str}` — {ts}"
+        content = f"🚨 **감지됨** `{label_str}` — {ts} ({len(images)}장)"
 
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        img_bytes = io.BytesIO(buf.tobytes())
-        img_bytes.name = "capture.jpg"
-
-        files = {"file": ("capture.jpg", img_bytes, "image/jpeg")}
+        files = {}
+        for i, (name, frame) in enumerate(images):
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            files[f"files[{i}]"] = (name, io.BytesIO(buf.tobytes()), "image/jpeg")
         data = {"content": content}
 
         try:
