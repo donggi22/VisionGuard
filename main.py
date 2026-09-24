@@ -121,8 +121,17 @@ def main():
     print(f"[CCTV] 시작 | 웹 http://{WEB_HOST}:{WEB_PORT}")
 
     # 컴포넌트 초기화
+    motion_det = MotionDetector()
+    video_buf = VideoBuffer()
+    yolo = YoloDetector()
+    recorder = EventRecorder()
+    discord = DiscordNotifier()
+
+    # 카메라는 무거운 초기화(YOLO 로딩 등)가 끝난 뒤에 연다.
+    # 먼저 열면 초기화 동안 스트림 프레임이 버퍼에 쌓여 영상이 그만큼 지연된다.
     # DSHOW는 장치 번호(USB 카메라)만 열 수 있으므로 RTSP 등 URL은 FFMPEG로 연다
-    backend = cv2.CAP_FFMPEG if isinstance(CAMERA_INDEX, str) else cv2.CAP_DSHOW
+    is_stream = isinstance(CAMERA_INDEX, str)
+    backend = cv2.CAP_FFMPEG if is_stream else cv2.CAP_DSHOW
     cap = cv2.VideoCapture(CAMERA_INDEX, backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
@@ -131,11 +140,6 @@ def main():
     if not cap.isOpened():
         sys.exit(f"[오류] 카메라 {CAMERA_INDEX} 열기 실패")
 
-    motion_det = MotionDetector()
-    video_buf = VideoBuffer()
-    yolo = YoloDetector()
-    recorder = EventRecorder()
-    discord = DiscordNotifier()
     discord.notify_status("✅ VisionGuard 가동됨")
 
     # 웹 서버 백그라운드 스레드
@@ -249,7 +253,10 @@ def main():
         # 웹 스트리밍용 프레임 갱신
         web_app.update_frame(display)
 
-        # FPS 제한
+        # FPS 제한 (스트림은 cap.read()가 카메라 송출 속도에 맞춰 대기하므로 제한하지 않는다.
+        # 제한하면 일시적 지연으로 쌓인 프레임을 따라잡지 못해 지연이 계속 유지된다)
+        if is_stream:
+            continue
         elapsed = time.time() - loop_start
         sleep_time = frame_interval - elapsed
         if sleep_time > 0:
