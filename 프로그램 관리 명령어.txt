@@ -37,13 +37,26 @@ Unregister-ScheduledTask -TaskName "VisionGuard" -Confirm:$false
 
 [ 자동 시작 등록 ]
 부팅 시 자동으로 VisionGuard가 실행되도록 등록합니다.
+(Windows 빠른 시작으로 켜질 때는 일반 부팅 트리거가 동작하지 않으므로,
+ Kernel-Boot 이벤트 27(BootType=1) 트리거를 함께 등록합니다)
 
 $action = New-ScheduledTaskAction `
     -Execute "C:\Users\dev\Desktop\VisionGuard\.venv\Scripts\python.exe" `
     -Argument "main.py" `
     -WorkingDirectory "C:\Users\dev\Desktop\VisionGuard"
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$bootTrigger = New-ScheduledTaskTrigger -AtStartup
+
+$eventClass = Get-CimClass -ClassName MSFT_TaskEventTrigger `
+    -Namespace Root/Microsoft/Windows/TaskScheduler
+$fastStartupTrigger = New-CimInstance -CimClass $eventClass -ClientOnly
+$fastStartupTrigger.Enabled = $true
+$fastStartupTrigger.Delay = "PT30S"
+$fastStartupTrigger.Subscription = @"
+<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Kernel-Boot'] and EventID=27]] and *[EventData[Data[@Name='BootType']=1]]</Select></Query></QueryList>
+"@
+
+$trigger = @($bootTrigger, $fastStartupTrigger)
 
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit ([TimeSpan]::Zero)

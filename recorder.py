@@ -2,13 +2,13 @@ import cv2
 import queue
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime  # , timedelta  (보관 기간 정리 비활성화)
 from pathlib import Path
 import numpy as np
 
 from config import (
-    FPS, FRAME_WIDTH, FRAME_HEIGHT,
-    POST_RECORD_SECONDS, RETENTION_DAYS,
+    FPS,
+    POST_RECORD_SECONDS,  # RETENTION_DAYS,  (보관 기간 정리 비활성화)
     RECORDINGS_DIR, CAPTURES_DIR,
 )
 from video_buffer import BufferedFrame
@@ -72,23 +72,36 @@ class EventRecorder:
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = RECORDINGS_DIR / f"{ts}_{event_label}.mp4"
-            pre_frame_copies = [bf.frame.copy() for bf in pre_frames]
+            # 버퍼의 프레임은 push 시점에 복사된 뒤 변경되지 않으므로 다시 복사하지 않는다
+            # (원본 해상도 프레임 150장을 복사하면 수백 MB가 추가로 필요함)
+            pre_frame_list = [bf.frame for bf in pre_frames]
 
             self._record_thread = threading.Thread(
                 target=self._record_worker,
-                args=(path, pre_frame_copies),
+                args=(path, pre_frame_list),
                 daemon=True,
             )
             self._record_thread.start()
             return path
 
     def _record_worker(self, path: Path, pre_frames: list[np.ndarray]):
-        writer = cv2.VideoWriter(
-            str(path), _fourcc(), FPS, (FRAME_WIDTH, FRAME_HEIGHT)
-        )
+        writer: cv2.VideoWriter | None = None
+        size: tuple[int, int] | None = None
+
+        def write(frame: np.ndarray):
+            # 녹화 해상도는 카메라 원본 프레임 크기를 따른다.
+            # VideoWriter는 크기가 고정이므로 녹화 도중 크기가 바뀌면 첫 프레임 크기에 맞춘다.
+            nonlocal writer, size
+            if writer is None:
+                size = (frame.shape[1], frame.shape[0])
+                writer = cv2.VideoWriter(str(path), _fourcc(), FPS, size)
+            if (frame.shape[1], frame.shape[0]) != size:
+                frame = cv2.resize(frame, size)
+            writer.write(frame)
+
         try:
             for frame in pre_frames:
-                writer.write(frame)
+                write(frame)
 
             while True:
                 with self._lock:
@@ -96,21 +109,22 @@ class EventRecorder:
                 if time.time() >= deadline:
                     break
                 try:
-                    frame = self._frame_queue.get(timeout=0.1)
-                    writer.write(frame)
+                    write(self._frame_queue.get(timeout=0.1))
                 except queue.Empty:
                     continue
         finally:
-            writer.release()
+            if writer is not None:
+                writer.release()
             with self._lock:
                 self._is_recording = False
 
-    def cleanup_old_files(self):
-        """RETENTION_DAYS 이상 된 파일 삭제."""
-        cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
-        for directory in (RECORDINGS_DIR, CAPTURES_DIR):
-            for f in directory.iterdir():
-                if f.is_file():
-                    mtime = datetime.fromtimestamp(f.stat().st_mtime)
-                    if mtime < cutoff:
-                        f.unlink()
+    # 영구 보관으로 변경하여 비활성화
+    # def cleanup_old_files(self):
+    #     """RETENTION_DAYS 이상 된 파일 삭제."""
+    #     cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
+    #     for directory in (RECORDINGS_DIR, CAPTURES_DIR):
+    #         for f in directory.iterdir():
+    #             if f.is_file():
+    #                 mtime = datetime.fromtimestamp(f.stat().st_mtime)
+    #                 if mtime < cutoff:
+    #                     f.unlink()

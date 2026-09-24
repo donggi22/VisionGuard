@@ -50,11 +50,12 @@ def _select_pre_samples(
     return samples
 
 
-def _cleanup_loop(recorder: EventRecorder):
-    """매일 자정에 오래된 파일 정리."""
-    while True:
-        time.sleep(3600)
-        recorder.cleanup_old_files()
+# 영구 보관으로 변경하여 비활성화
+# def _cleanup_loop(recorder: EventRecorder):
+#     """매일 자정에 오래된 파일 정리."""
+#     while True:
+#         time.sleep(3600)
+#         recorder.cleanup_old_files()
 
 
 def _start_web_server():
@@ -118,10 +119,21 @@ def _verify_and_notify(
 
 
 def main():
-    print(f"[CCTV] 시작 — 카메라 {CAMERA_INDEX}, 웹 http://{WEB_HOST}:{WEB_PORT}")
+    print(f"[CCTV] 시작 | 웹 http://{WEB_HOST}:{WEB_PORT}")
 
     # 컴포넌트 초기화
-    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+    motion_det = MotionDetector()
+    video_buf = VideoBuffer()
+    yolo = YoloDetector()
+    recorder = EventRecorder()
+    discord = DiscordNotifier()
+
+    # 카메라는 무거운 초기화(YOLO 로딩 등)가 끝난 뒤에 연다.
+    # 먼저 열면 초기화 동안 스트림 프레임이 버퍼에 쌓여 영상이 그만큼 지연된다.
+    # DSHOW는 장치 번호(USB 카메라)만 열 수 있으므로 RTSP 등 URL은 FFMPEG로 연다
+    is_stream = isinstance(CAMERA_INDEX, str)
+    backend = cv2.CAP_FFMPEG if is_stream else cv2.CAP_DSHOW
+    cap = cv2.VideoCapture(CAMERA_INDEX, backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, FPS)
@@ -129,20 +141,15 @@ def main():
     if not cap.isOpened():
         sys.exit(f"[오류] 카메라 {CAMERA_INDEX} 열기 실패")
 
-    motion_det = MotionDetector()
-    video_buf = VideoBuffer()
-    yolo = YoloDetector()
-    recorder = EventRecorder()
-    discord = DiscordNotifier()
     discord.notify_status("✅ VisionGuard 가동됨")
 
     # 웹 서버 백그라운드 스레드
     web_thread = threading.Thread(target=_start_web_server, daemon=True)
     web_thread.start()
 
-    # 정리 스레드
-    cleanup_thread = threading.Thread(target=_cleanup_loop, args=(recorder,), daemon=True)
-    cleanup_thread.start()
+    # 정리 스레드 (영구 보관으로 변경하여 비활성화)
+    # cleanup_thread = threading.Thread(target=_cleanup_loop, args=(recorder,), daemon=True)
+    # cleanup_thread.start()
 
     # Ctrl+C 처리
     def _sigint(sig, frame):
@@ -162,26 +169,28 @@ def main():
     while True:
         loop_start = time.time()
 
-        ret, frame = cap.read()
+        ret, raw = cap.read()
         if not ret:
             print("[경고] 프레임 읽기 실패, 재시도...")
             time.sleep(0.5)
             continue
 
-        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+        # 저장(캡처·녹화)과 YOLO 검증은 카메라 원본 해상도(raw)로,
+        # 모션 감지와 웹 스트리밍은 축소 해상도(frame)로 처리해 CPU 부하를 유지한다
+        frame = cv2.resize(raw, (FRAME_WIDTH, FRAME_HEIGHT))
 
         # 순환 버퍼에 항상 push
-        video_buf.push(frame)
+        video_buf.push(raw)
 
         # 녹화 중이면 recorder의 프레임 큐에도 push
-        recorder.push_frame(frame)
+        recorder.push_frame(raw)
 
         # 진행 중인 YOLO 검증이 있으면, 목표 시각이 지난 post 프레임을 채집
         if pending_verify is not None:
             targets = pending_verify["post_targets"]
             now = time.time()
             while targets and now >= targets[0]:
-                pending_verify["post_samples"].append(frame.copy())
+                pending_verify["post_samples"].append(raw.copy())
                 targets.pop(0)
             if not targets:
                 all_pairs = pending_verify["pre_pairs"] + list(
@@ -204,7 +213,7 @@ def main():
         if motion and (now - _last_motion_alert[0]) >= ALERT_COOLDOWN_SECONDS:
             trigger_time = now
             _last_motion_alert[0] = trigger_time
-            trigger_frame = frame.copy()
+            trigger_frame = raw.copy()
 
             # 1) 선(先) 캡처: YOLO 결과를 기다리지 않고 즉시 캡쳐 + 녹화 시작/연장
             #    (CPU 추론 지연 때문에 객체가 지나간 뒤에 캡쳐되는 것을 방지)
@@ -247,7 +256,10 @@ def main():
         # 웹 스트리밍용 프레임 갱신
         web_app.update_frame(display)
 
-        # FPS 제한
+        # FPS 제한 (스트림은 cap.read()가 카메라 송출 속도에 맞춰 대기하므로 제한하지 않는다.
+        # 제한하면 일시적 지연으로 쌓인 프레임을 따라잡지 못해 지연이 계속 유지된다)
+        if is_stream:
+            continue
         elapsed = time.time() - loop_start
         sleep_time = frame_interval - elapsed
         if sleep_time > 0:
