@@ -116,13 +116,26 @@ New-NetFirewallRule -DisplayName "VisionGuard 8080" -Direction Inbound -Protocol
 
 `프로그램 관리 명령어.txt` 파일에 전체 명령어 모음이 있습니다.
 
+Windows 빠른 시작(Fast Startup)으로 켜질 때는 `-AtStartup` 트리거가 동작하지 않으므로, 빠른 시작 부팅 시 기록되는 `Kernel-Boot` 이벤트 27(`BootType=1`) 트리거를 함께 등록합니다.
+
 ```powershell
 $action = New-ScheduledTaskAction `
     -Execute "C:\Users\dev\Desktop\VisionGuard\.venv\Scripts\python.exe" `
     -Argument "main.py" `
     -WorkingDirectory "C:\Users\dev\Desktop\VisionGuard"
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$bootTrigger = New-ScheduledTaskTrigger -AtStartup
+
+$eventClass = Get-CimClass -ClassName MSFT_TaskEventTrigger `
+    -Namespace Root/Microsoft/Windows/TaskScheduler
+$fastStartupTrigger = New-CimInstance -CimClass $eventClass -ClientOnly
+$fastStartupTrigger.Enabled = $true
+$fastStartupTrigger.Delay = "PT30S"
+$fastStartupTrigger.Subscription = @"
+<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Kernel-Boot'] and EventID=27]] and *[EventData[Data[@Name='BootType']=1]]</Select></Query></QueryList>
+"@
+
+$trigger = @($bootTrigger, $fastStartupTrigger)
 
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit ([TimeSpan]::Zero)

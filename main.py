@@ -118,10 +118,12 @@ def _verify_and_notify(
 
 
 def main():
-    print(f"[CCTV] 시작 — 카메라 {CAMERA_INDEX}, 웹 http://{WEB_HOST}:{WEB_PORT}")
+    print(f"[CCTV] 시작 | 웹 http://{WEB_HOST}:{WEB_PORT}")
 
     # 컴포넌트 초기화
-    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+    # DSHOW는 장치 번호(USB 카메라)만 열 수 있으므로 RTSP 등 URL은 FFMPEG로 연다
+    backend = cv2.CAP_FFMPEG if isinstance(CAMERA_INDEX, str) else cv2.CAP_DSHOW
+    cap = cv2.VideoCapture(CAMERA_INDEX, backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, FPS)

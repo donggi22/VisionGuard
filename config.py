@@ -9,10 +9,11 @@ RECORDINGS_DIR = BASE_DIR / "recordings"
 CAPTURES_DIR = BASE_DIR / "captures"
 
 # Camera
-CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+# CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_INDEX = os.getenv("CAMERA_URL", "")
 FPS = int(os.getenv("FPS", "15"))
 FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", "640"))
-FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "480"))
+FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "360"))
 
 # Motion detection
 MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "3000"))  # contour area px²
