@@ -12,6 +12,7 @@ CAPTURES_DIR = BASE_DIR / "captures"
 # CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 CAMERA_INDEX = os.getenv("CAMERA_URL", "")
 FPS = int(os.getenv("FPS", "15"))
+# 모션 감지·웹 스트리밍용 처리 해상도 (캡처·녹화는 카메라 원본 해상도로 저장)
 FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", "640"))
 FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "360"))
 
@@ -36,8 +37,8 @@ ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "30"))
 VERIFY_WINDOW_SECONDS = float(os.getenv("VERIFY_WINDOW_SECONDS", "1.0"))  # 트리거 기준 앞뒤 각각(초)
 VERIFY_SAMPLE_COUNT = int(os.getenv("VERIFY_SAMPLE_COUNT", "6"))          # 검증에 쓸 총 샘플 프레임 수
 
-# Storage cleanup
-RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
+# Storage cleanup (영구 보관으로 변경하여 비활성화)
+# RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 
 # Web
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")

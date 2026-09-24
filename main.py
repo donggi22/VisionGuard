@@ -50,11 +50,12 @@ def _select_pre_samples(
     return samples
 
 
-def _cleanup_loop(recorder: EventRecorder):
-    """매일 자정에 오래된 파일 정리."""
-    while True:
-        time.sleep(3600)
-        recorder.cleanup_old_files()
+# 영구 보관으로 변경하여 비활성화
+# def _cleanup_loop(recorder: EventRecorder):
+#     """매일 자정에 오래된 파일 정리."""
+#     while True:
+#         time.sleep(3600)
+#         recorder.cleanup_old_files()
 
 
 def _start_web_server():
@@ -146,9 +147,9 @@ def main():
     web_thread = threading.Thread(target=_start_web_server, daemon=True)
     web_thread.start()
 
-    # 정리 스레드
-    cleanup_thread = threading.Thread(target=_cleanup_loop, args=(recorder,), daemon=True)
-    cleanup_thread.start()
+    # 정리 스레드 (영구 보관으로 변경하여 비활성화)
+    # cleanup_thread = threading.Thread(target=_cleanup_loop, args=(recorder,), daemon=True)
+    # cleanup_thread.start()
 
     # Ctrl+C 처리
     def _sigint(sig, frame):
@@ -168,26 +169,28 @@ def main():
     while True:
         loop_start = time.time()
 
-        ret, frame = cap.read()
+        ret, raw = cap.read()
         if not ret:
             print("[경고] 프레임 읽기 실패, 재시도...")
             time.sleep(0.5)
             continue
 
-        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+        # 저장(캡처·녹화)과 YOLO 검증은 카메라 원본 해상도(raw)로,
+        # 모션 감지와 웹 스트리밍은 축소 해상도(frame)로 처리해 CPU 부하를 유지한다
+        frame = cv2.resize(raw, (FRAME_WIDTH, FRAME_HEIGHT))
 
         # 순환 버퍼에 항상 push
-        video_buf.push(frame)
+        video_buf.push(raw)
 
         # 녹화 중이면 recorder의 프레임 큐에도 push
-        recorder.push_frame(frame)
+        recorder.push_frame(raw)
 
         # 진행 중인 YOLO 검증이 있으면, 목표 시각이 지난 post 프레임을 채집
         if pending_verify is not None:
             targets = pending_verify["post_targets"]
             now = time.time()
             while targets and now >= targets[0]:
-                pending_verify["post_samples"].append(frame.copy())
+                pending_verify["post_samples"].append(raw.copy())
                 targets.pop(0)
             if not targets:
                 all_pairs = pending_verify["pre_pairs"] + list(
@@ -210,7 +213,7 @@ def main():
         if motion and (now - _last_motion_alert[0]) >= ALERT_COOLDOWN_SECONDS:
             trigger_time = now
             _last_motion_alert[0] = trigger_time
-            trigger_frame = frame.copy()
+            trigger_frame = raw.copy()
 
             # 1) 선(先) 캡처: YOLO 결과를 기다리지 않고 즉시 캡쳐 + 녹화 시작/연장
             #    (CPU 추론 지연 때문에 객체가 지나간 뒤에 캡쳐되는 것을 방지)
