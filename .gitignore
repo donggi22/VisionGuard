@@ -5,3 +5,4 @@
 __pycache__/
 yolov8n_openvino_model/
 yolov8n.pt
+stop.flag

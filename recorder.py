@@ -84,6 +84,14 @@ class EventRecorder:
             self._record_thread.start()
             return path
 
+    def stop(self, timeout: float = 5.0):
+        """종료 시 진행 중인 녹화를 즉시 마무리해 mp4 파일이 깨지지 않게 한다."""
+        with self._lock:
+            self._record_deadline = 0.0
+            thread = self._record_thread
+        if thread is not None:
+            thread.join(timeout)
+
     def _record_worker(self, path: Path, pre_frames: list[np.ndarray]):
         writer: cv2.VideoWriter | None = None
         size: tuple[int, int] | None = None
