@@ -7,6 +7,8 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent
 RECORDINGS_DIR = BASE_DIR / "recordings"
 CAPTURES_DIR = BASE_DIR / "captures"
+# 중지.bat 이 만드는 종료 요청 파일. 메인 루프가 발견하면 알림을 보내고 정상 종료한다
+STOP_FLAG_PATH = BASE_DIR / "stop.flag"
 
 # Camera
 # CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
@@ -15,6 +17,11 @@ FPS = int(os.getenv("FPS", "15"))
 # 모션 감지·웹 스트리밍용 처리 해상도 (캡처·녹화는 카메라 원본 해상도로 저장)
 FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", "640"))
 FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "360"))
+# 카메라 연결 재시도 (부팅 직후 네트워크 미연결, 카메라 재부팅 대비)
+CAMERA_RETRY_SECONDS = int(os.getenv("CAMERA_RETRY_SECONDS", "5"))            # 열기 실패 시 재시도 간격(초)
+CAMERA_REOPEN_AFTER_FAILS = int(os.getenv("CAMERA_REOPEN_AFTER_FAILS", "20"))  # 연속 N회 읽기 실패 시 재연결
+# 절전/빠른 시작 복귀 감지: 이 시간(초) 이상 프로세스가 멈춰 있었으면 복귀로 판단
+RESUME_DETECT_SECONDS = int(os.getenv("RESUME_DETECT_SECONDS", "10"))
 
 # Motion detection
 MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "3000"))  # contour area px²

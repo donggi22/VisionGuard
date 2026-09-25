@@ -21,9 +21,12 @@ from config import (
     CAMERA_INDEX, FPS, FRAME_WIDTH, FRAME_HEIGHT, WEB_HOST, WEB_PORT,
     ALERT_COOLDOWN_SECONDS, POST_RECORD_SECONDS,
     VERIFY_WINDOW_SECONDS, VERIFY_SAMPLE_COUNT,
+    CAMERA_RETRY_SECONDS, CAMERA_REOPEN_AFTER_FAILS, RESUME_DETECT_SECONDS,
+    STOP_FLAG_PATH,
 )
 from discord_notifier import DiscordNotifier
 from motion_detector import MotionDetector
+from power_events import start_power_watcher
 from recorder import EventRecorder
 from video_buffer import BufferedFrame, VideoBuffer
 from yolo_detector import YoloDetector
@@ -56,6 +59,31 @@ def _select_pre_samples(
 #     while True:
 #         time.sleep(3600)
 #         recorder.cleanup_old_files()
+
+
+def _open_camera(backend: int) -> cv2.VideoCapture | None:
+    """
+    카메라가 열릴 때까지 재시도한다.
+    빠른 시작 부팅 직후에는 Wi-Fi 연결이 작업 실행보다 늦어 RTSP 연결이 실패하므로,
+    종료하지 않고 네트워크/카메라가 준비될 때까지 대기한다.
+    대기 중 종료 요청(STOP_FLAG_PATH)이 들어오면 None을 반환한다.
+    """
+    attempt = 0
+    while True:
+        if STOP_FLAG_PATH.exists():
+            return None
+        cap = cv2.VideoCapture(CAMERA_INDEX, backend)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, FPS)
+        if cap.isOpened():
+            if attempt:
+                print(f"[CCTV] 카메라 연결됨 (재시도 {attempt}회)")
+            return cap
+        cap.release()
+        attempt += 1
+        print(f"[경고] 카메라 열기 실패, {CAMERA_RETRY_SECONDS}초 후 재시도 ({attempt}회)")
+        time.sleep(CAMERA_RETRY_SECONDS)
 
 
 def _start_web_server():
@@ -128,20 +156,30 @@ def main():
     recorder = EventRecorder()
     discord = DiscordNotifier()
 
+    # 이전 실행에서 남은 종료 요청 파일이 있으면 시작하자마자 종료되므로 지운다
+    STOP_FLAG_PATH.unlink(missing_ok=True)
+    cap = None
+
+    def _stop():
+        """정상 종료: 알림 전송 → 진행 중인 녹화 마무리 → 카메라 해제."""
+        print("\n[CCTV] 종료 중...")
+        STOP_FLAG_PATH.unlink(missing_ok=True)
+        discord.notify_status("⏹️ VisionGuard 종료됨")
+        recorder.stop()
+        if cap is not None:
+            cap.release()
+        sys.exit(0)
+
     # 카메라는 무거운 초기화(YOLO 로딩 등)가 끝난 뒤에 연다.
     # 먼저 열면 초기화 동안 스트림 프레임이 버퍼에 쌓여 영상이 그만큼 지연된다.
     # DSHOW는 장치 번호(USB 카메라)만 열 수 있으므로 RTSP 등 URL은 FFMPEG로 연다
     is_stream = isinstance(CAMERA_INDEX, str)
     backend = cv2.CAP_FFMPEG if is_stream else cv2.CAP_DSHOW
-    cap = cv2.VideoCapture(CAMERA_INDEX, backend)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, FPS)
+    cap = _open_camera(backend)
+    if cap is None:
+        _stop()
 
-    if not cap.isOpened():
-        sys.exit(f"[오류] 카메라 {CAMERA_INDEX} 열기 실패")
-
-    discord.notify_status("✅ VisionGuard 가동됨")
+    discord.notify_status("▶️ VisionGuard 가동됨")
 
     # 웹 서버 백그라운드 스레드
     web_thread = threading.Thread(target=_start_web_server, daemon=True)
@@ -151,14 +189,16 @@ def main():
     # cleanup_thread = threading.Thread(target=_cleanup_loop, args=(recorder,), daemon=True)
     # cleanup_thread.start()
 
-    # Ctrl+C 처리
+    # Ctrl+C 처리 (직접 실행한 콘솔 창에서 종료할 때)
     def _sigint(sig, frame):
-        print("\n[CCTV] 종료 중...")
-        discord.notify_status("⏹️ VisionGuard 종료됨")
-        cap.release()
-        sys.exit(0)
+        _stop()
 
     signal.signal(signal.SIGINT, _sigint)
+
+    # 절전/빠른 시작 종료 알림. Windows가 오래 기다려주지 않으므로 짧은 타임아웃으로 보낸다
+    start_power_watcher(
+        on_suspend=lambda: discord.notify_status("⏹️ VisionGuard 종료됨 (절전/빠른 시작)", timeout=2),
+    )
 
     frame_interval = 1.0 / FPS
     _last_motion_alert = [0.0]  # list로 감싸서 중첩 스코프에서 수정 가능하게
@@ -166,14 +206,52 @@ def main():
 
     print("[CCTV] 루프 시작. Ctrl+C 로 종료.")
 
+    read_fails = 0
+    # 빠른 시작/절전 시 프로세스는 종료되지 않고 멈췄다가 그대로 이어서 실행되므로
+    # 작업 스케줄러가 재실행하지 않는다. time.monotonic()은 절전·최대 절전 시간을
+    # 세지 않으므로 벽시계와의 차이로 멈춰 있던 시간을 계산해 복귀를 감지한다.
+    wall_prev, mono_prev = time.time(), time.monotonic()
+
     while True:
         loop_start = time.time()
 
+        # 중지.bat 등의 종료 요청 (작업 스케줄러 실행 중에는 Ctrl+C를 보낼 수 없으므로 파일로 요청받는다)
+        if STOP_FLAG_PATH.exists():
+            _stop()
+
+        mono_now = time.monotonic()
+        suspended = (loop_start - wall_prev) - (mono_now - mono_prev)
+        wall_prev, mono_prev = loop_start, mono_now
+        if suspended >= RESUME_DETECT_SECONDS:
+            print(f"[CCTV] 절전/빠른 시작 복귀 감지 ({suspended:.0f}초 정지), 카메라 재연결")
+            # 멈춰 있던 동안 RTSP 연결이 끊겼거나 오래된 프레임이 쌓여 있으므로 다시 연다.
+            # 카메라가 열렸다면 네트워크도 연결된 것이므로 그 뒤에 알림을 보낸다.
+            cap.release()
+            cap = _open_camera(backend)
+            if cap is None:
+                _stop()
+            read_fails = 0
+            pending_verify = None
+            discord.notify_status("🔄 VisionGuard 복귀됨")
+            wall_prev, mono_prev = time.time(), time.monotonic()
+            continue
+
         ret, raw = cap.read()
         if not ret:
+            read_fails += 1
             print("[경고] 프레임 읽기 실패, 재시도...")
+            # RTSP는 끊긴 뒤 같은 캡처 객체로는 복구되지 않으므로 연속 실패 시 다시 연다
+            if read_fails >= CAMERA_REOPEN_AFTER_FAILS:
+                print("[경고] 연속 읽기 실패, 카메라 재연결 시도")
+                cap.release()
+                cap = _open_camera(backend)
+                if cap is None:
+                    _stop()
+                read_fails = 0
+                continue
             time.sleep(0.5)
             continue
+        read_fails = 0
 
         # 저장(캡처·녹화)과 YOLO 검증은 카메라 원본 해상도(raw)로,
         # 모션 감지와 웹 스트리밍은 축소 해상도(frame)로 처리해 CPU 부하를 유지한다
